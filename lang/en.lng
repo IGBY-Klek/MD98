@@ -1,0 +1,40 @@
+; MD98 language script - English
+; Format: key=value  (one entry per line)
+; Lines starting with ';' or '#' are comments.
+; Escape sequences in values:
+;   \t  tab   \n  newline   \r  carriage return   \0  NUL byte   \\  backslash
+
+file=&File
+new=&New\tCtrl+N
+open=&Open...\tCtrl+O
+save=&Save\tCtrl+S
+saveas=Save &As...
+exit=E&xit
+
+edit=&Edit
+undo=&Undo\tCtrl+Z
+cut=Cu&t\tCtrl+X
+copy=&Copy\tCtrl+C
+paste=&Paste\tCtrl+V
+selectall=Select &All\tCtrl+A
+
+view=&View
+wordwrap=&Word Wrap
+refresh=&Refresh Preview\tF5
+language=&Language
+langen=English
+langzh=Chinese (Simplified)
+
+help=&Help
+about=&About MD98...
+
+untitled=Untitled
+titlefmt=%s - MD98
+
+saveprompt=The document has been modified. Save changes?
+savetitle=MD98
+
+abouttitle=About MD98
+abouttext=MD98 - Markdown editor for Windows 98\n\nA lightweight Markdown viewer/editor\nwritten in C with the Win32 API.
+
+filter=Markdown Files (*.md)\0*.md\0Text Files (*.txt)\0*.txt\0All Files (*.*)\0*.*\0
