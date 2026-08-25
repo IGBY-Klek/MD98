@@ -27,17 +27,27 @@ typedef struct {
     int    cap;
 } LINES;
 
-static void lines_add(LINES *L, const char *s, int len)
+static int lines_add(LINES *L, const char *s, int len)
 {
+    char **nv;
+    char *line;
+
     if (L->n == L->cap) {
         int nc = L->cap ? L->cap * 2 : 16;
-        L->v = (char **)realloc(L->v, nc * sizeof(char *));
+        nv = (char **)realloc(L->v, nc * sizeof(char *));
+        if (!nv)
+            return 0;
+        L->v = nv;
         L->cap = nc;
     }
-    L->v[L->n] = (char *)malloc(len + 1);
-    memcpy(L->v[L->n], s, len);
-    L->v[L->n][len] = 0;
+    line = (char *)malloc(len + 1);
+    if (!line)
+        return 0;
+    memcpy(line, s, len);
+    line[len] = 0;
+    L->v[L->n] = line;
     L->n++;
+    return 1;
 }
 
 static void lines_free(LINES *L)
@@ -68,27 +78,39 @@ static MD_BLOCK *new_block(MD_DOC *doc, MD_BLOCK_TYPE type)
     return b;
 }
 
-static void block_add_line(MD_BLOCK *b, const char *s, int len)
+static int block_add_line(MD_BLOCK *b, const char *s, int len)
 {
+    char **nv;
+    char *line;
+
+    if (!b || len < 0)
+        return 0;
     if (b->line_count == b->line_cap) {
         int nc = b->line_cap ? b->line_cap * 2 : 4;
-        b->lines = (char **)realloc(b->lines, nc * sizeof(char *));
+        nv = (char **)realloc(b->lines, nc * sizeof(char *));
+        if (!nv)
+            return 0;
+        b->lines = nv;
         b->line_cap = nc;
     }
-    b->lines[b->line_count] = (char *)malloc(len + 1);
-    memcpy(b->lines[b->line_count], s, len);
-    b->lines[b->line_count][len] = 0;
+    line = (char *)malloc(len + 1);
+    if (!line)
+        return 0;
+    memcpy(line, s, len);
+    line[len] = 0;
+    b->lines[b->line_count] = line;
     b->line_count++;
+    return 1;
 }
 
 /* 把块的多行合并为单行（用于段落/标题/引用）。 */
-static void block_join_lines(MD_BLOCK *b, const char *sep)
+static int block_join_lines(MD_BLOCK *b, const char *sep)
 {
     int i, total, seplen;
     char *joined, *d;
 
     if (b->line_count <= 1)
-        return;
+        return 1;
 
     seplen = (int)strlen(sep);
     total = 0;
@@ -97,6 +119,8 @@ static void block_join_lines(MD_BLOCK *b, const char *sep)
     total += seplen * (b->line_count - 1);
 
     joined = (char *)malloc(total + 1);
+    if (!joined)
+        return 0;
     d = joined;
     for (i = 0; i < b->line_count; i++) {
         int l;
@@ -118,6 +142,7 @@ static void block_join_lines(MD_BLOCK *b, const char *sep)
     b->lines[0] = joined;
     b->line_count = 1;
     b->line_cap = 1;
+    return 1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -259,11 +284,13 @@ void md_parse(const char *text, int len, MD_DOC *doc)
 {
     const char *p, *end, *nl, *line_end;
     int i, llen, lvl;
+    int failed;
     LINES L;
 
     doc->first = doc->last = NULL;
 
     /* 1. 按行拆分（去掉行尾 \r 与空白，便于后续判定）。 */
+    failed = 0;
     L.v = NULL;
     L.n = L.cap = 0;
     p = text;
@@ -275,7 +302,10 @@ void md_parse(const char *text, int len, MD_DOC *doc)
         while (llen > 0 &&
                (p[llen - 1] == '\r' || p[llen - 1] == ' ' || p[llen - 1] == '\t'))
             llen--;
-        lines_add(&L, p, llen);
+        if (!lines_add(&L, p, llen)) {
+            lines_free(&L);
+            return;
+        }
         p = nl ? nl + 1 : end;
     }
 
@@ -293,15 +323,21 @@ void md_parse(const char *text, int len, MD_DOC *doc)
         /* 围栏代码块 */
         if (is_fence(line, &rest)) {
             MD_BLOCK *b = new_block(doc, MD_BLOCK_CODE);
+            if (!b) { failed = 1; break; }
             i++;
             while (i < L.n) {
                 if (is_fence_close(L.v[i])) {
                     i++;
                     break;
                 }
-                block_add_line(b, L.v[i], (int)strlen(L.v[i]));
+                if (!block_add_line(b, L.v[i], (int)strlen(L.v[i]))) {
+                    failed = 1;
+                    break;
+                }
                 i++;
             }
+            if (failed)
+                break;
             continue;
         }
 
@@ -309,16 +345,23 @@ void md_parse(const char *text, int len, MD_DOC *doc)
         if (heading_level(line, &lvl)) {
             MD_BLOCK *b = new_block(doc, MD_BLOCK_HEADING);
             const char *h = line + lvl;
+            if (!b) { failed = 1; break; }
             while (*h == ' ' || *h == '\t') h++;
             b->level = lvl;
-            block_add_line(b, h, (int)strlen(h));
+            if (!block_add_line(b, h, (int)strlen(h))) {
+                failed = 1;
+                break;
+            }
             i++;
             continue;
         }
 
         /* 水平线 */
         if (is_hr(line)) {
-            new_block(doc, MD_BLOCK_HR);
+            if (!new_block(doc, MD_BLOCK_HR)) {
+                failed = 1;
+                break;
+            }
             i++;
             continue;
         }
@@ -326,67 +369,122 @@ void md_parse(const char *text, int len, MD_DOC *doc)
         /* 引用 */
         if (is_quote(line, &rest)) {
             MD_BLOCK *b = new_block(doc, MD_BLOCK_QUOTE);
-            block_add_line(b, rest, (int)strlen(rest));
+            if (!b) { failed = 1; break; }
+            if (!block_add_line(b, rest, (int)strlen(rest))) {
+                failed = 1;
+                break;
+            }
             i++;
             while (i < L.n && is_quote(L.v[i], &rest)) {
-                block_add_line(b, rest, (int)strlen(rest));
+                if (!block_add_line(b, rest, (int)strlen(rest))) {
+                    failed = 1;
+                    break;
+                }
                 i++;
             }
-            block_join_lines(b, " ");
+            if (failed)
+                break;
+            if (!block_join_lines(b, " ")) {
+                failed = 1;
+                break;
+            }
             continue;
         }
 
         /* 无序列表 */
         if (is_ul(line, &rest)) {
             MD_BLOCK *b = new_block(doc, MD_BLOCK_UL);
-            block_add_line(b, rest, (int)strlen(rest));
+            if (!b) { failed = 1; break; }
+            if (!block_add_line(b, rest, (int)strlen(rest))) {
+                failed = 1;
+                break;
+            }
             i++;
             while (i < L.n && is_ul(L.v[i], &rest)) {
-                block_add_line(b, rest, (int)strlen(rest));
+                if (!block_add_line(b, rest, (int)strlen(rest))) {
+                    failed = 1;
+                    break;
+                }
                 i++;
             }
+            if (failed)
+                break;
             continue;
         }
 
         /* 有序列表 */
         if (is_ol(line, &rest)) {
             MD_BLOCK *b = new_block(doc, MD_BLOCK_OL);
-            block_add_line(b, rest, (int)strlen(rest));
+            if (!b) { failed = 1; break; }
+            if (!block_add_line(b, rest, (int)strlen(rest))) {
+                failed = 1;
+                break;
+            }
             i++;
             while (i < L.n && is_ol(L.v[i], &rest)) {
-                block_add_line(b, rest, (int)strlen(rest));
+                if (!block_add_line(b, rest, (int)strlen(rest))) {
+                    failed = 1;
+                    break;
+                }
                 i++;
             }
+            if (failed)
+                break;
             continue;
         }
 
         /* 缩进代码块 */
         if (is_indented_code(line)) {
             MD_BLOCK *b = new_block(doc, MD_BLOCK_CODE);
+            if (!b) { failed = 1; break; }
             while (i < L.n && (is_indented_code(L.v[i]) || is_blank(L.v[i]))) {
-                if (is_blank(L.v[i]))
-                    block_add_line(b, "", 0);
-                else
-                    block_add_line(b, L.v[i] + 4, (int)strlen(L.v[i]) - 4);
+                if (is_blank(L.v[i])) {
+                    if (!block_add_line(b, "", 0)) {
+                        failed = 1;
+                        break;
+                    }
+                } else {
+                    int skip = (L.v[i][0] == '\t') ? 1 : 4;
+                    if (!block_add_line(b, L.v[i] + skip, (int)strlen(L.v[i]) - skip)) {
+                        failed = 1;
+                        break;
+                    }
+                }
                 i++;
             }
+            if (failed)
+                break;
             continue;
         }
 
         /* 段落 */
         {
             MD_BLOCK *b = new_block(doc, MD_BLOCK_PARAGRAPH);
-            block_add_line(b, line, (int)strlen(line));
+            if (!b) { failed = 1; break; }
+            if (!block_add_line(b, line, (int)strlen(line))) {
+                failed = 1;
+                break;
+            }
             i++;
             while (i < L.n && !starts_block(L.v[i])) {
-                block_add_line(b, L.v[i], (int)strlen(L.v[i]));
+                if (!block_add_line(b, L.v[i], (int)strlen(L.v[i]))) {
+                    failed = 1;
+                    break;
+                }
                 i++;
             }
-            block_join_lines(b, " ");
+            if (failed)
+                break;
+            if (!block_join_lines(b, " ")) {
+                failed = 1;
+                break;
+            }
         }
     }
 
     lines_free(&L);
+    if (failed)
+        md_free_doc(doc);
 }
 
 void md_free_doc(MD_DOC *doc)

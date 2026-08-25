@@ -106,6 +106,33 @@ static const char *defaults[L_COUNT] = {
 static char *strings[L_COUNT];
 static char  current_code[8];
 
+static void path_copy(char *dst, int dstlen, const char *src)
+{
+    if (dstlen <= 0)
+        return;
+    lstrcpynA(dst, src ? src : "", dstlen);
+}
+
+static void path_cat(char *dst, int dstlen, const char *src)
+{
+    int used;
+
+    if (dstlen <= 0)
+        return;
+    used = lstrlenA(dst);
+    if (used < dstlen - 1)
+        lstrcpynA(dst + used, src ? src : "", dstlen - used);
+}
+
+static void make_lang_path(char *path, const char *base_dir, const char *mid,
+                           const char *code)
+{
+    path_copy(path, MAX_PATH, base_dir);
+    path_cat(path, MAX_PATH, mid);
+    path_cat(path, MAX_PATH, code);
+    path_cat(path, MAX_PATH, ".lng");
+}
+
 /* ------------------------------------------------------------------ */
 /* unescape: expand \t \n \r \0 \\ into their byte values              */
 /* ------------------------------------------------------------------ */
@@ -275,7 +302,7 @@ int lang_load_by_code(const char *code, const char *base_dir)
     char path[MAX_PATH];
 
     if (base_dir && base_dir[0]) {
-        wsprintfA(path, "%s\\lang\\%s.lng", base_dir, code);
+        make_lang_path(path, base_dir, "\\lang\\", code);
         if (lang_load(path) == 0) {
             lang_set_code(code);
             return 0;
@@ -283,14 +310,14 @@ int lang_load_by_code(const char *code, const char *base_dir)
 
         /* If the exe lives in a subdirectory (e.g. bin\), also look in the
          * parent directory's lang\ folder. */
-        wsprintfA(path, "%s\\..\\lang\\%s.lng", base_dir, code);
+        make_lang_path(path, base_dir, "\\..\\lang\\", code);
         if (lang_load(path) == 0) {
             lang_set_code(code);
             return 0;
         }
     }
 
-    wsprintfA(path, "lang\\%s.lng", code);
+    make_lang_path(path, "lang\\", "", code);
     if (lang_load(path) == 0) {
         lang_set_code(code);
         return 0;

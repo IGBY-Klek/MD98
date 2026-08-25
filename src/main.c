@@ -104,6 +104,46 @@ static HFONT  g_fontEditor;
 static HMODULE    g_hRichDll;
 static const char *g_richClass = "RichEdit20A";
 
+static void SafeCopy(char *dst, int dstlen, const char *src)
+{
+    if (dstlen <= 0)
+        return;
+    if (!src)
+        src = "";
+    lstrcpynA(dst, src, dstlen);
+}
+
+static void SafeCat(char *dst, int dstlen, const char *src)
+{
+    int used;
+
+    if (dstlen <= 0)
+        return;
+    used = lstrlenA(dst);
+    if (used < dstlen - 1)
+        lstrcpynA(dst + used, src ? src : "", dstlen - used);
+}
+
+static void BuildTitleText(char *title, int titlelen, const char *name)
+{
+    char fmt[MAX_PATH + 32];
+    char safe_name[MAX_PATH];
+    char *p;
+
+    SafeCopy(fmt, sizeof(fmt), lang_str(L_TITLE_FORMAT));
+    SafeCopy(safe_name, sizeof(safe_name), name);
+
+    p = strstr(fmt, "%s");
+    if (p) {
+        *p = 0;
+        SafeCopy(title, titlelen, fmt);
+        SafeCat(title, titlelen, safe_name);
+        SafeCat(title, titlelen, p + 2);
+    } else {
+        SafeCopy(title, titlelen, fmt);
+    }
+}
+
 /* Original window proc of the preview control (subclassing). */
 static WNDPROC g_prevProc;
 
@@ -187,6 +227,9 @@ static void ToggleWordWrap(void)
 {
     int len = GetWindowTextLengthA(g_hwndEditor);
     char *text = (char *)malloc(len + 1);
+
+    if (!text)
+        return;
 
     g_wordWrap = !g_wordWrap;
 
@@ -286,6 +329,8 @@ static void UpdatePreview(void)
     STREAMIN si;
 
     text = (char *)malloc(len + 1);
+    if (!text)
+        return;
     GetWindowTextA(g_hwndEditor, text, len + 1);
 
     memset(&doc, 0, sizeof(doc));
@@ -293,7 +338,11 @@ static void UpdatePreview(void)
 
     rtf = NULL;
     rlen = 0;
-    render_rtf(&doc, &rtf, &rlen);
+    if (render_rtf(&doc, &rtf, &rlen) != 0) {
+        md_free_doc(&doc);
+        free(text);
+        return;
+    }
 
     si.data = rtf;
     si.len = rlen;
@@ -322,6 +371,9 @@ static BOOL SaveFile(const char *path)
     char *buf = (char *)malloc(len + 1);
     FILE *f;
     char *p;
+
+    if (!buf)
+        return FALSE;
 
     GetWindowTextA(g_hwndEditor, buf, len + 1);
 
@@ -363,6 +415,10 @@ static BOOL LoadFile(const char *path)
         size = 0;
 
     buf = (char *)malloc(size + 1);
+    if (!buf) {
+        fclose(f);
+        return FALSE;
+    }
     n = fread(buf, 1, (size_t)size, f);
     buf[n] = 0;
     fclose(f);
@@ -389,7 +445,8 @@ static BOOL SaveFileDlg(void)
         OPENFILENAMEA ofn;
         char buf[MAX_PATH];
         memset(&ofn, 0, sizeof(ofn));
-        wsprintfA(buf, "%s.md", lang_str(L_TITLE_UNTITLED));
+        SafeCopy(buf, MAX_PATH, lang_str(L_TITLE_UNTITLED));
+        SafeCat(buf, MAX_PATH, ".md");
 
         ofn.lStructSize = OPENFILENAME_SIZE_VERSION_400;
         ofn.hwndOwner = g_hwndMain;
@@ -460,7 +517,8 @@ static void NewDocument(void)
 static void UpdateTitle(void)
 {
     char title[MAX_PATH + 32];
-    wsprintfA(title, lang_str(L_TITLE_FORMAT),
+
+    BuildTitleText(title, sizeof(title),
         g_fileName[0] ? g_fileName : lang_str(L_TITLE_UNTITLED));
     SetWindowTextA(g_hwndMain, title);
 }
@@ -564,7 +622,11 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 {
     switch (msg) {
     case WM_CREATE: {
-        InitRichEdit();
+        if (!InitRichEdit()) {
+            MessageBoxA(hwnd, "Cannot load RichEdit control.", "MD98",
+                MB_OK | MB_ICONERROR);
+            return -1;
+        }
         InitFonts();
         CreateEditor();
 
@@ -576,6 +638,12 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_READONLY |
             ES_AUTOVSCROLL | WS_VSCROLL,
             0, 0, 0, 0, hwnd, (HMENU)IDC_PREVIEW, g_hinst, NULL);
+
+        if (!g_hwndEditor || !g_hwndSplit || !g_hwndPreview) {
+            MessageBoxA(hwnd, "Cannot create application controls.", "MD98",
+                MB_OK | MB_ICONERROR);
+            return -1;
+        }
 
         SendMessageA(g_hwndPreview, EM_SETOPTIONS, ECOOP_OR,
             ECO_AUTOWORDSELECTION | ECO_READONLY);
@@ -637,9 +705,11 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             char buf[MAX_PATH];
             memset(&ofn, 0, sizeof(ofn));
             if (g_fileName[0])
-                strcpy(buf, g_fileName);
-            else
-                wsprintfA(buf, "%s.md", lang_str(L_TITLE_UNTITLED));
+                SafeCopy(buf, MAX_PATH, g_fileName);
+            else {
+                SafeCopy(buf, MAX_PATH, lang_str(L_TITLE_UNTITLED));
+                SafeCat(buf, MAX_PATH, ".md");
+            }
             ofn.lStructSize = OPENFILENAME_SIZE_VERSION_400;
             ofn.hwndOwner = hwnd;
             ofn.lpstrFilter = lang_str(L_FILTER);
@@ -759,7 +829,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
     g_hAccel = LoadAcceleratorsA(hInstance, MAKEINTRESOURCEA(IDR_ACCEL));
 
-    wsprintfA(initialTitle, lang_str(L_TITLE_FORMAT), lang_str(L_TITLE_UNTITLED));
+    BuildTitleText(initialTitle, sizeof(initialTitle), lang_str(L_TITLE_UNTITLED));
 
     g_hwndMain = CreateWindowExA(0, wc.lpszClassName,
         initialTitle,

@@ -38,35 +38,58 @@ typedef struct {
     char *data;
     int   len;
     int   cap;
+    int   failed;
 } RBUF;
 
-static void rbuf_grow(RBUF *b, int extra)
+static int rbuf_grow(RBUF *b, int extra)
 {
-    int need = b->len + extra + 1;
+    int need;
+
+    if (b->failed)
+        return 0;
+    need = b->len + extra + 1;
+    if (need < b->len) {
+        b->failed = 1;
+        return 0;
+    }
     if (need > b->cap) {
         int ncap = b->cap ? b->cap : 256;
-        while (ncap < need)
+        char *ndata;
+        while (ncap < need) {
+            if (ncap > 0x3fffffff) {
+                b->failed = 1;
+                return 0;
+            }
             ncap *= 2;
-        b->data = (char *)realloc(b->data, ncap);
+        }
+        ndata = (char *)realloc(b->data, ncap);
+        if (!ndata) {
+            b->failed = 1;
+            return 0;
+        }
+        b->data = ndata;
         b->cap = ncap;
     }
+    return 1;
 }
 
-static void rbuf_put(RBUF *b, const char *s, int n)
+static int rbuf_put(RBUF *b, const char *s, int n)
 {
-    rbuf_grow(b, n);
+    if (!rbuf_grow(b, n))
+        return 0;
     memcpy(b->data + b->len, s, n);
     b->len += n;
     b->data[b->len] = 0;
+    return 1;
 }
 
-static void rbuf_str(RBUF *b, const char *s)
+static int rbuf_str(RBUF *b, const char *s)
 {
-    rbuf_put(b, s, (int)strlen(s));
+    return rbuf_put(b, s, (int)strlen(s));
 }
 
 /* Append a decimal integer (avoids vsnprintf for MSVC6-era toolchains). */
-static void rbuf_int(RBUF *b, int value)
+static int rbuf_int(RBUF *b, int value)
 {
     char tmp[16];
     char *p = tmp + sizeof(tmp) - 1;
@@ -80,7 +103,7 @@ static void rbuf_int(RBUF *b, int value)
     } while (u);
     if (neg)
         *--p = '-';
-    rbuf_str(b, p);
+    return rbuf_str(b, p);
 }
 
 /* ------------------------------------------------------------------ */
@@ -120,7 +143,9 @@ static int rbuf_char(RBUF *b, const char *s, const char *end)
         return 2;
     }
     if (*s == '\\' || *s == '{' || *s == '}') {
-        char c[2] = { '\\', *s };
+        char c[2];
+        c[0] = '\\';
+        c[1] = *s;
         rbuf_put(b, c, 2);
     } else {
         rbuf_put(b, s, 1);
@@ -275,6 +300,8 @@ static void render_inline_span(RBUF *b, const char *s, const char *e)
 static void render_block(RBUF *b, const MD_BLOCK *blk)
 {
     int i;
+    if (blk->line_count <= 0 && blk->type != MD_BLOCK_HR)
+        return;
     switch (blk->type) {
     case MD_BLOCK_PARAGRAPH:
         rbuf_str(b, "\\pard\\fs20 ");
@@ -319,7 +346,7 @@ static void render_block(RBUF *b, const MD_BLOCK *blk)
 
     case MD_BLOCK_OL:
         for (i = 0; i < blk->line_count; i++) {
-            rbuf_str(b, "\\pard\\li360\\fi-360");
+            rbuf_str(b, "\\pard\\li360\\fi-360 ");
             rbuf_int(b, i + 1);
             rbuf_str(b, ".\\tab ");
             render_inline_span(b, blk->lines[i], blk->lines[i] + strlen(blk->lines[i]));
@@ -383,6 +410,14 @@ int render_rtf(const MD_DOC *doc, char **out, int *out_len)
         render_block(&b, blk);
 
     rbuf_str(&b, "}");
+
+    if (b.failed || !b.data) {
+        if (b.data)
+            free(b.data);
+        *out = NULL;
+        *out_len = 0;
+        return -1;
+    }
 
     *out = b.data;
     *out_len = b.len;
