@@ -1,0 +1,52 @@
+/* md98.rc - MD98 resource script (accelerators, version info)
+ *
+ * The menu bar is no longer a resource: it is built at run time from the
+ * externalized language script (see lang.c), so the UI can be switched
+ * between English and Chinese (GBK codepage) without recompiling.
+ */
+
+#include "resource.h"
+#include <windows.h>
+
+IDI_APP ICON "..\\asset\\MD98.ico"
+
+IDR_ACCEL ACCELERATORS
+BEGIN
+    "N",    ID_FILE_NEW,       VIRTKEY, CONTROL
+    "O",    ID_FILE_OPEN,      VIRTKEY, CONTROL
+    "S",    ID_FILE_SAVE,      VIRTKEY, CONTROL
+    "Z",    ID_EDIT_UNDO,      VIRTKEY, CONTROL
+    "X",    ID_EDIT_CUT,       VIRTKEY, CONTROL
+    "C",    ID_EDIT_COPY,      VIRTKEY, CONTROL
+    "V",    ID_EDIT_PASTE,     VIRTKEY, CONTROL
+    "A",    ID_EDIT_SELECTALL, VIRTKEY, CONTROL
+    VK_F5,  ID_VIEW_REFRESH,   VIRTKEY
+END
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION     1,0,0,0
+ PRODUCTVERSION  1,0,0,0
+ FILEFLAGSMASK   0x3fL
+ FILEFLAGS       0x0L
+ FILEOS          0x40004L
+ FILETYPE        0x1L
+ FILESUBTYPE     0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName",      "MD98 Project\0"
+            VALUE "FileDescription",  "MD98 Markdown Editor\0"
+            VALUE "FileVersion",      "1.0.0.0\0"
+            VALUE "InternalName",     "MD98\0"
+            VALUE "OriginalFilename", "MD98.EXE\0"
+            VALUE "ProductName",      "MD98\0"
+            VALUE "ProductVersion",   "1.0.0.0\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
